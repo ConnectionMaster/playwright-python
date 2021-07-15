@@ -36,6 +36,7 @@ from playwright._impl._helper import (
     MouseButton,
     URLMatch,
     URLMatcher,
+    async_readfile,
     locals_to_params,
     monotonic_time,
 )
@@ -152,7 +153,11 @@ class Frame(ChannelOwner):
             timeout = self._page._timeout_settings.navigation_timeout()
         deadline = monotonic_time() + timeout
         wait_helper = self._setup_navigation_wait_helper("expect_navigation", timeout)
-        matcher = URLMatcher(url) if url else None
+        matcher = (
+            URLMatcher(self._page._browser_context._options.get("baseURL"), url)
+            if url
+            else None
+        )
 
         def predicate(event: Any) -> bool:
             # Any failed navigation results in a rejection.
@@ -180,6 +185,21 @@ class Frame(ChannelOwner):
             return None
 
         return EventContextManagerImpl(asyncio.create_task(continuation()))
+
+    async def wait_for_url(
+        self,
+        url: URLMatch,
+        wait_until: DocumentLoadState = None,
+        timeout: float = None,
+    ) -> None:
+        matcher = URLMatcher(self._page._browser_context._options.get("baseURL"), url)
+        if matcher.matches(self.url):
+            await self.wait_for_load_state(state=wait_until, timeout=timeout)
+            return
+        async with self.expect_navigation(
+            url=url, wait_until=wait_until, timeout=timeout
+        ):
+            pass
 
     async def wait_for_load_state(
         self, state: DocumentLoadState = None, timeout: float = None
@@ -345,9 +365,12 @@ class Frame(ChannelOwner):
     ) -> ElementHandle:
         params = locals_to_params(locals())
         if path:
-            with open(path, "r") as file:
-                params["content"] = file.read() + "\n//# sourceURL=" + str(Path(path))
-                del params["path"]
+            params["content"] = (
+                (await async_readfile(path)).decode()
+                + "\n//# sourceURL="
+                + str(Path(path))
+            )
+            del params["path"]
         return from_channel(await self._channel.send("addScriptTag", params))
 
     async def add_style_tag(
@@ -355,11 +378,13 @@ class Frame(ChannelOwner):
     ) -> ElementHandle:
         params = locals_to_params(locals())
         if path:
-            with open(path, "r") as file:
-                params["content"] = (
-                    file.read() + "\n/*# sourceURL=" + str(Path(path)) + "*/"
-                )
-                del params["path"]
+            params["content"] = (
+                (await async_readfile(path)).decode()
+                + "\n/*# sourceURL="
+                + str(Path(path))
+                + "*/"
+            )
+            del params["path"]
         return from_channel(await self._channel.send("addStyleTag", params))
 
     async def click(
@@ -373,6 +398,7 @@ class Frame(ChannelOwner):
         timeout: float = None,
         force: bool = None,
         noWaitAfter: bool = None,
+        trial: bool = None,
     ) -> None:
         await self._channel.send("click", locals_to_params(locals()))
 
@@ -386,6 +412,7 @@ class Frame(ChannelOwner):
         timeout: float = None,
         force: bool = None,
         noWaitAfter: bool = None,
+        trial: bool = None,
     ) -> None:
         await self._channel.send("dblclick", locals_to_params(locals()))
 
@@ -397,11 +424,17 @@ class Frame(ChannelOwner):
         timeout: float = None,
         force: bool = None,
         noWaitAfter: bool = None,
+        trial: bool = None,
     ) -> None:
         await self._channel.send("tap", locals_to_params(locals()))
 
     async def fill(
-        self, selector: str, value: str, timeout: float = None, noWaitAfter: bool = None
+        self,
+        selector: str,
+        value: str,
+        timeout: float = None,
+        noWaitAfter: bool = None,
+        force: bool = None,
     ) -> None:
         await self._channel.send("fill", locals_to_params(locals()))
 
@@ -429,6 +462,7 @@ class Frame(ChannelOwner):
         position: Position = None,
         timeout: float = None,
         force: bool = None,
+        trial: bool = None,
     ) -> None:
         await self._channel.send("hover", locals_to_params(locals()))
 
@@ -441,6 +475,7 @@ class Frame(ChannelOwner):
         element: Union["ElementHandle", List["ElementHandle"]] = None,
         timeout: float = None,
         noWaitAfter: bool = None,
+        force: bool = None,
     ) -> List[str]:
         params = locals_to_params(
             dict(
@@ -452,6 +487,13 @@ class Frame(ChannelOwner):
         )
         return await self._channel.send("selectOption", params)
 
+    async def input_value(
+        self,
+        selector: str,
+        timeout: float = None,
+    ) -> str:
+        return await self._channel.send("inputValue", locals_to_params(locals()))
+
     async def set_input_files(
         self,
         selector: str,
@@ -460,7 +502,7 @@ class Frame(ChannelOwner):
         noWaitAfter: bool = None,
     ) -> None:
         params = locals_to_params(locals())
-        params["files"] = normalize_file_payloads(files)
+        params["files"] = await normalize_file_payloads(files)
         await self._channel.send("setInputFiles", params)
 
     async def type(
@@ -486,18 +528,22 @@ class Frame(ChannelOwner):
     async def check(
         self,
         selector: str,
+        position: Position = None,
         timeout: float = None,
         force: bool = None,
         noWaitAfter: bool = None,
+        trial: bool = None,
     ) -> None:
         await self._channel.send("check", locals_to_params(locals()))
 
     async def uncheck(
         self,
         selector: str,
+        position: Position = None,
         timeout: float = None,
         force: bool = None,
         noWaitAfter: bool = None,
+        trial: bool = None,
     ) -> None:
         await self._channel.send("uncheck", locals_to_params(locals()))
 

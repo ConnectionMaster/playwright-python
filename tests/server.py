@@ -32,7 +32,7 @@ from playwright._impl._path_utils import get_file_dirname
 _dirname = get_file_dirname()
 
 
-def _find_free_port():
+def find_free_port():
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -43,7 +43,7 @@ class Server:
     protocol = "http"
 
     def __init__(self):
-        self.PORT = _find_free_port()
+        self.PORT = find_free_port()
         self.EMPTY_PAGE = f"{self.protocol}://localhost:{self.PORT}/empty.html"
         self.PREFIX = f"{self.protocol}://localhost:{self.PORT}"
         self.CROSS_PROCESS_PREFIX = f"{self.protocol}://127.0.0.1:{self.PORT}"
@@ -110,9 +110,7 @@ class Server:
                     return
                 file_content = None
                 try:
-                    file_content = (
-                        static_path / request.path.decode()[1:]
-                    ).read_bytes()
+                    file_content = (static_path / path[1:]).read_bytes()
                     request.setHeader(b"Content-Type", mimetypes.guess_type(path)[0])
                     request.setHeader(b"Cache-Control", "no-cache, no-store")
                     if path in gzip_routes:
@@ -121,7 +119,7 @@ class Server:
                     else:
                         request.write(file_content)
                     self.setResponseCode(HTTPStatus.OK)
-                except (FileNotFoundError, IsADirectoryError):
+                except (FileNotFoundError, IsADirectoryError, PermissionError):
                     request.setResponseCode(HTTPStatus.NOT_FOUND)
                 self.finish()
 
@@ -192,7 +190,7 @@ class HTTPSServer(Server):
 class WebSocketServerServer(WebSocketServerProtocol):
     def __init__(self) -> None:
         super().__init__()
-        self.PORT = _find_free_port()
+        self.PORT = find_free_port()
 
     def start(self):
         ws = WebSocketServerFactory("ws://127.0.0.1:" + str(self.PORT))

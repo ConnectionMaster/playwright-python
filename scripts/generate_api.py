@@ -30,7 +30,6 @@ from playwright._impl._browser import Browser
 from playwright._impl._browser_context import BrowserContext
 from playwright._impl._browser_type import BrowserType
 from playwright._impl._cdp_session import CDPSession
-from playwright._impl._chromium_browser_context import ChromiumBrowserContext
 from playwright._impl._console_message import ConsoleMessage
 from playwright._impl._dialog import Dialog
 from playwright._impl._download import Download
@@ -44,6 +43,7 @@ from playwright._impl._network import Request, Response, Route, WebSocket
 from playwright._impl._page import Page, Worker
 from playwright._impl._playwright import Playwright
 from playwright._impl._selectors import Selectors
+from playwright._impl._tracing import Tracing
 from playwright._impl._video import Video
 
 
@@ -148,6 +148,13 @@ def arguments(func: FunctionType, indent: int) -> str:
             and "_api_structures" not in value_str
         ):
             tokens.append(f"{name}={to_snake_case(name)}._impl_obj")
+        elif (
+            re.match(r"typing\.Optional\[playwright\._impl\.[\w]+\.[\w]+\]", value_str)
+            and "_api_structures" not in value_str
+        ):
+            tokens.append(
+                f"{name}={to_snake_case(name)}._impl_obj if {to_snake_case(name)} else None"
+            )
         else:
             tokens.append(f"{name}={to_snake_case(name)}")
     return split.join(tokens)
@@ -209,12 +216,11 @@ else:  # pragma: no cover
 
 
 from playwright._impl._accessibility import Accessibility as AccessibilityImpl
-from playwright._impl._api_structures import Cookie, FloatRect, FilePayload, Geolocation, HttpCredentials, PdfMargins, Position, ProxySettings, ResourceTiming, SourceLocation, StorageState, ViewportSize
+from playwright._impl._api_structures import Cookie, FloatRect, FilePayload, Geolocation, HttpCredentials, PdfMargins, Position, ProxySettings, ResourceTiming, SourceLocation, StorageState, ViewportSize, RemoteAddr, SecurityDetails
 from playwright._impl._browser import Browser as BrowserImpl
 from playwright._impl._browser_context import BrowserContext as BrowserContextImpl
 from playwright._impl._browser_type import BrowserType as BrowserTypeImpl
 from playwright._impl._cdp_session import CDPSession as CDPSessionImpl
-from playwright._impl._chromium_browser_context import ChromiumBrowserContext as ChromiumBrowserContextImpl
 from playwright._impl._console_message import ConsoleMessage as ConsoleMessageImpl
 from playwright._impl._dialog import Dialog as DialogImpl
 from playwright._impl._download import Download as DownloadImpl
@@ -228,6 +234,7 @@ from playwright._impl._page import Page as PageImpl, Worker as WorkerImpl
 from playwright._impl._playwright import Playwright as PlaywrightImpl
 from playwright._impl._selectors import Selectors as SelectorsImpl
 from playwright._impl._video import Video as VideoImpl
+from playwright._impl._tracing import Tracing as TracingImpl
 
 """
 
@@ -254,10 +261,10 @@ all_types = [
     Page,
     BrowserContext,
     CDPSession,
-    ChromiumBrowserContext,
     Browser,
     BrowserType,
     Playwright,
+    Tracing,
 ]
 
 api_globals = globals()

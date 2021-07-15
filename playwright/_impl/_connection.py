@@ -44,7 +44,14 @@ class Channel(AsyncIOEventEmitter):
         if params is None:
             params = {}
         callback = self._connection._send_message_to_server(self._guid, method, params)
-        result = await callback.future
+
+        done, pending = await asyncio.wait(
+            {self._connection._transport.on_error_future, callback.future},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if not callback.future.done():
+            callback.future.cancel()
+        result = next(iter(done)).result()
         # Protocol now has named return values, assume result is one level deeper unless
         # there is explicit ambiguity.
         if not result:
@@ -92,16 +99,15 @@ class ChannelOwner(AsyncIOEventEmitter):
         if self._parent:
             self._parent._objects[guid] = self
 
-    def _wait_for_event_info_before(self, wait_id: str, name: str) -> None:
+    def _wait_for_event_info_before(self, wait_id: str, api_name: str) -> None:
         self._connection._send_message_to_server(
             self._guid,
             "waitForEventInfo",
             {
                 "info": {
-                    "name": name,
+                    "apiName": api_name,
                     "waitId": wait_id,
                     "phase": "before",
-                    "stack": capture_call_stack(),
                 }
             },
         )
@@ -143,18 +149,22 @@ class RootChannelOwner(ChannelOwner):
 
 class Connection:
     def __init__(
-        self, dispatcher_fiber: Any, object_factory: Any, driver_executable: Path
+        self,
+        dispatcher_fiber: Any,
+        object_factory: Callable[[ChannelOwner, str, str, Dict], ChannelOwner],
+        transport: Transport,
     ) -> None:
-        self._dispatcher_fiber: Any = dispatcher_fiber
-        self._transport = Transport(driver_executable)
+        self._dispatcher_fiber = dispatcher_fiber
+        self._transport = transport
         self._transport.on_message = lambda msg: self._dispatch(msg)
-        self._waiting_for_object: Dict[str, Any] = {}
+        self._waiting_for_object: Dict[str, Callable[[ChannelOwner], None]] = {}
         self._last_id = 0
         self._objects: Dict[str, ChannelOwner] = {}
         self._callbacks: Dict[int, ProtocolCallback] = {}
         self._object_factory = object_factory
         self._is_sync = False
         self._api_name = ""
+        self._child_ws_connections: List["Connection"] = []
 
     async def run_as_sync(self) -> None:
         self._is_sync = True
@@ -166,26 +176,32 @@ class Connection:
         await self._transport.run()
 
     def stop_sync(self) -> None:
-        self._transport.stop()
+        self._transport.request_stop()
         self._dispatcher_fiber.switch()
+        self.cleanup()
 
     async def stop_async(self) -> None:
-        self._transport.stop()
+        self._transport.request_stop()
         await self._transport.wait_until_stopped()
+        self.cleanup()
 
-    async def wait_for_object_with_known_name(self, guid: str) -> Any:
+    def cleanup(self) -> None:
+        for ws_connection in self._child_ws_connections:
+            ws_connection._transport.dispose()
+
+    async def wait_for_object_with_known_name(self, guid: str) -> ChannelOwner:
         if guid in self._objects:
             return self._objects[guid]
-        callback = self._loop.create_future()
+        callback: asyncio.Future[ChannelOwner] = self._loop.create_future()
 
-        def callback_wrapper(result: Any) -> None:
+        def callback_wrapper(result: ChannelOwner) -> None:
             callback.set_result(result)
 
         self._waiting_for_object[guid] = callback_wrapper
         return await callback
 
     def call_on_object_with_known_name(
-        self, guid: str, callback: Callable[[Any], None]
+        self, guid: str, callback: Callable[[ChannelOwner], None]
     ) -> None:
         self._waiting_for_object[guid] = callback
 
@@ -220,6 +236,8 @@ class Connection:
         id = msg.get("id")
         if id:
             callback = self._callbacks.pop(id)
+            if callback.future.cancelled():
+                return
             error = msg.get("error")
             if error:
                 parsed_error = parse_error(error["error"])  # type: ignore
@@ -261,8 +279,7 @@ class Connection:
 
     def _create_remote_object(
         self, parent: ChannelOwner, type: str, guid: str, initializer: Dict
-    ) -> Any:
-        result: ChannelOwner
+    ) -> ChannelOwner:
         initializer = self._replace_guids_with_channels(initializer)
         result = self._object_factory(parent, type, guid, initializer)
         if guid in self._waiting_for_object:
@@ -320,7 +337,3 @@ def serialize_call_stack(stack_trace: traceback.StackSummary) -> List[Dict]:
         )
     stack.reverse()
     return stack
-
-
-def capture_call_stack() -> List[Dict]:
-    return serialize_call_stack(traceback.extract_stack())
